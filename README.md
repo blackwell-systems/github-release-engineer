@@ -21,13 +21,13 @@ Distribution updates are handled by companion skills. The release engineer calls
 The skill follows a fixed sequence. Each step gates the next:
 
 1. **Pre-flight** — Verify the working tree is clean, the branch is up to date with the remote, and there are no uncommitted changes. Abort with a clear error if any check fails.
-2. **Version resolution** — Determine the release version: read from argument, `VERSION` file, `Cargo.toml`, `package.json`, or prompt the user. Validate it is a valid semver string.
+2. **Version resolution** — Determine the release version: read from argument, `VERSION` file, or a language-specific manifest (`Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`, `pom.xml`, etc.). Fall back to prompting the user. Validate it is a valid semver string.
 3. **Changelog verification** — Confirm an entry exists for the version in `CHANGELOG.md` (or equivalent). Warn but do not abort if no changelog is found; the user decides.
 4. **Tag** — Create a signed, annotated git tag (`git tag -s vX.Y.Z -m "Release vX.Y.Z"`). Verify the tag before pushing.
 5. **Push tag** — Push the tag to the remote. Confirm the push succeeded.
 6. **Watch CI** — Poll the GitHub Actions workflow run triggered by the tag. Stream status until the run reaches a terminal state (success, failure, cancelled). Timeout after a configurable maximum (default 30 minutes).
 7. **Diagnose and fix failures** — If the run fails, fetch the failed job logs, identify the root cause, propose a fix, apply it (with user confirmation), amend or add a commit, delete and re-push the tag, and re-enter the CI watch loop. Repeat up to a configurable retry limit.
-8. **Wait for goreleaser artifacts** — After CI passes, poll the GitHub release for goreleaser-produced assets. Wait until all expected artifacts are attached or the wait times out.
+8. **Wait for release artifacts** — After CI passes, poll the GitHub release for attached assets. Wait until assets are present and non-zero in size, or the wait times out. The skill does not assume any specific build tool — artifacts may be produced by goreleaser, cargo-dist, PyInstaller, a custom Makefile, or any other mechanism. It waits for assets to appear on the release, regardless of how they were built.
 9. **Verify the release** — Confirm the release is published (not draft, not pre-release unless explicitly flagged), the tag matches, assets are present and non-zero in size, and the release notes are populated.
 10. **Report** — Emit a structured summary: version, tag, CI run URL, artifact list with sizes, release URL, and any warnings encountered during the run.
 
@@ -39,8 +39,8 @@ The release engineer handles the GitHub side only. When the GitHub release is ve
 /release v1.4.0
 # → github-release-engineer runs steps 1–10
 # → on success, calls /homebrew-formula-updater
-# → homebrew-formula-updater fetches the goreleaser-produced darwin artifact,
-#   computes the sha256, opens a PR against the tap repo
+# → homebrew-formula-updater reads the artifact URLs and checksums
+#   from the step report and updates the tap formula
 ```
 
 Each skill owns exactly one domain. The release engineer does not know how to write a Homebrew formula. `homebrew-formula-updater` does not know how to watch a CI run. They compose by contract: the release engineer's step report provides the artifact URLs and checksums that downstream skills consume.
