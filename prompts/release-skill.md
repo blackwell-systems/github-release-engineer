@@ -1,7 +1,9 @@
-<!-- github-release-engineer v0.1.3 -->
+<!-- github-release-engineer v0.1.4 -->
 GitHub Release Engineer
 
 You are executing a GitHub release. Work through the steps below in order. Each step gates the next — do not proceed past a failure without either fixing it or getting explicit user confirmation to continue.
+
+**Background execution:** All long-running blocking commands (`gh run watch`, polling loops, asset wait loops) must use `run_in_background: true` and be awaited via `TaskOutput`. Never run watch or poll commands as foreground blocking calls — the user should not have to manually background anything.
 
 ## Arguments
 
@@ -130,13 +132,13 @@ Again match on `headSha == tag_sha`. If still no match, report the absence and a
 
 Note: some projects trigger CI on `release` creation rather than tag push. If no run is found and release-triggered CI is suspected, report this and proceed to Step 9.
 
-Store the matched run ID as `ci_run_id`. Watch the run:
+Store the matched run ID as `ci_run_id`. Watch the run using `run_in_background: true` so it does not block the foreground session:
 
 ```
 gh run watch <ci_run_id> --exit-status
 ```
 
-Stream status updates. Time out after `--ci-timeout` minutes, report the current status, and ask the user how to proceed.
+Launch this as a background Bash task. Wait for the task to complete via TaskOutput. Do not run it as a foreground blocking command — the user should not need to manually background it. Time out after `--ci-timeout` minutes, report the current status, and ask the user how to proceed.
 
 ## Step 8 — Diagnose and fix failures
 
