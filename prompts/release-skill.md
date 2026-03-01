@@ -1,4 +1,4 @@
-<!-- github-release-engineer v0.1.2 -->
+<!-- github-release-engineer v0.1.3 -->
 GitHub Release Engineer
 
 You are executing a GitHub release. Work through the steps below in order. Each step gates the next — do not proceed past a failure without either fixing it or getting explicit user confirmation to continue.
@@ -10,8 +10,9 @@ You are executing a GitHub release. Work through the steps below in order. Each 
 - `/release --dry-run <version>` — run pre-flight and tag validation only; do not push, do not trigger CI
 - `/release --pre-release <version>` — mark the GitHub release as pre-release (`prerelease=true`, `draft=false`)
 - `/release --draft <version>` — create the release as a draft (`draft=true`, `prerelease=false`)
+- `/release --allow-ahead <version>` — allow releasing when local branch is ahead of remote (default: abort)
 
-Timeouts are configurable: `--ci-timeout <minutes>` (default 30), `--asset-timeout <minutes>` (default 10), `--poll-interval <seconds>` (default 30), `--retries <n>` (default 2).
+Timeouts are configurable: `--ci-timeout <minutes>` (default 30), `--ci-discovery-timeout <seconds>` (default 60), `--asset-timeout <minutes>` (default 10), `--poll-interval <seconds>` (default 30), `--retries <n>` (default 2).
 
 ## State
 
@@ -33,7 +34,7 @@ Verify the repository is in a releasable state. Run all checks before reporting 
 **Authentication and remote:**
 - Verify GitHub CLI is authenticated: `gh auth status`. Abort if not.
 - Determine the remote URL: `git remote get-url origin`. Abort if missing. Store as `remote_url`.
-- Verify the remote is reachable: `gh repo view`. Abort if not.
+- Verify the remote is reachable and `gh` is scoped to this repo: run `gh repo view` from inside the repo working directory. Abort if not.
 
 **Working tree:**
 - No uncommitted changes: `git status --porcelain` must be empty
@@ -43,7 +44,11 @@ Verify the repository is in a releasable state. Run all checks before reporting 
 **Branch:**
 - Determine the default branch: `git symbolic-ref refs/remotes/origin/HEAD`. Extract the last path component (e.g. `refs/remotes/origin/main` → `main`). Store as `release_branch`. If the command fails or is unset, ask the user which branch to release from.
 - Confirm the current branch matches `release_branch`, or ask the user to confirm if it does not.
-- Fetch and verify up to date: `git fetch origin`, then `git rev-list --left-right --count HEAD...@{u}`. Require `0\t0` (exactly equal). If behind or diverged, abort. If ahead only, warn and ask the user to confirm.
+- Fetch and verify up to date: `git fetch origin`, then `git rev-list --left-right --count HEAD...@{u}`. The output is `<ahead>\t<behind>`.
+  - `behind > 0`: abort — local branch is behind remote.
+  - `ahead > 0` and `--allow-ahead` not passed: abort — local branch has unpublished commits. Releasing from unpublished commits means the release tag cannot be reproduced from the remote state. Pass `--allow-ahead` explicitly to override.
+  - `ahead > 0` and `--allow-ahead` passed: warn and note in final report warnings.
+  - `0\t0`: proceed.
 
 If any check fails, report the specific failure and stop. Do not attempt to fix pre-flight failures automatically.
 
@@ -83,7 +88,7 @@ Before creating the tag:
 
 - **Tag must not exist locally**: `git tag -l <version>` must return empty. If it exists, ask the user: delete and recreate, or abort?
 - **Tag must not exist on remote**: `git ls-remote --tags origin "refs/tags/<version>"`. Treat any output (including `refs/tags/<version>^{}` for annotated tags) as "exists." If the tag exists on the remote, report it and ask the user how to proceed — do not delete it automatically.
-- **Confirm commit to tag**: show `HEAD` commit hash and message. Ask the user to confirm this is the correct commit. Store the confirmed SHA as `tag_sha`.
+- **Confirm commit to tag**: default is `HEAD`. Show the full commit SHA (copyable) and commit message. Ask the user to confirm this is the correct commit. If the user wishes to tag a different commit, accept a SHA as input. Store the confirmed SHA as `tag_sha`.
 
 ## Step 5 — Tag
 
@@ -109,17 +114,23 @@ Confirm the push succeeded. If it fails, report the full error and stop. Do not 
 
 ## Step 7 — Watch CI
 
-Locate the GitHub Actions run triggered by the tag push by matching on `tag_sha`:
+Locate the GitHub Actions run triggered by the tag push. Poll every `--poll-interval` seconds for up to `--ci-discovery-timeout` seconds total. On each poll:
 
 ```
 gh run list --event push --json databaseId,headSha,headBranch,displayTitle,createdAt,url
 ```
 
-Select the run whose `headSha` matches `tag_sha`. If multiple runs match, select the most recent by `createdAt`. If no matching run is found within 60 seconds of the push, poll again. After 60 seconds with no match, report the absence and ask the user whether to wait longer, skip CI monitoring, or abort. Store the run ID as `ci_run_id`.
+Select the run whose `headSha` matches `tag_sha`. If multiple runs match, select the most recent by `createdAt`. If no match is found after `--ci-discovery-timeout` seconds, retry without the event filter (some tag-triggered workflows may appear under a different event type):
 
-Note: some projects trigger releases on `release` creation rather than tag push, in which case no run may appear at this point — report this if suspected and proceed to Step 9.
+```
+gh run list --json databaseId,headSha,headBranch,displayTitle,createdAt,url
+```
 
-Watch the run:
+Again match on `headSha == tag_sha`. If still no match, report the absence and ask the user whether to wait longer, skip CI monitoring, or abort.
+
+Note: some projects trigger CI on `release` creation rather than tag push. If no run is found and release-triggered CI is suspected, report this and proceed to Step 9.
+
+Store the matched run ID as `ci_run_id`. Watch the run:
 
 ```
 gh run watch <ci_run_id> --exit-status
@@ -174,20 +185,28 @@ Once the release exists, store its URL as `release_url`. Poll for assets every `
 gh release view <version> --json assets
 ```
 
-Wait until:
+Wait until all of the following are true:
 - At least one asset is attached
-- All assets are non-zero in size
-- Asset count is stable across two consecutive polls (avoids mid-upload state)
+- All assets are non-zero in size (keep polling if any asset has size 0)
+- Asset count is stable across two consecutive polls — if the count changes between polls, reset the stability counter and continue polling
 
 Time out after `--asset-timeout` minutes, report the current release state, and ask the user whether to continue.
 
 ## Step 10 — Verify release
 
-Confirm the release is in the expected state:
+Determine expected release state from arguments:
+
+| Flag passed | Expected `isDraft` | Expected `isPrerelease` |
+|---|---|---|
+| neither | `false` | `false` |
+| `--pre-release` | `false` | `true` |
+| `--draft` | `true` | `false` |
+
+Confirm the release matches:
 
 - Release exists: `gh release view <version>`
-- `isDraft` is `false` (unless `--draft` was passed)
-- `isPrerelease` matches the `--pre-release` flag
+- `isDraft` matches expected value
+- `isPrerelease` matches expected value
 - Tag on the release matches `version`
 - Assets are present and non-zero in size
 - Release notes are populated
@@ -211,9 +230,9 @@ Assets:
 Warnings: <any non-fatal issues, or "none">
 ```
 
-Warnings must include any of: missing changelog entry, no changelog file found, ahead-of-remote confirmed by user, no CI run found (skipped), no assets found (skipped).
+Warnings must include any of: missing changelog entry, no changelog file found, ahead-of-remote (`--allow-ahead`), no CI run found (skipped), no assets found (skipped).
 
-If companion skills are configured (e.g. `homebrew-formula-updater`), invoke them now. Pass: `release_url`, `version`, `tag_sha`, and the full asset list with filenames, download URLs, sizes, and checksums if available. Companion skill failures are reported as warnings in the summary — they do not retroactively fail the release.
+If companion skills are configured (e.g. `homebrew-formula-updater`), invoke them now. Pass: `release_url`, `version`, `tag_sha`, and the full asset list with filenames, download URLs, and sizes. For checksums: include any `.sha256`, `.sha512`, or `.checksums.txt` files attached as release assets; do not download and hash assets locally. Companion skill failures are reported as warnings in the summary — they do not retroactively fail the release.
 
 ## Error handling policy
 
@@ -223,14 +242,15 @@ If companion skills are configured (e.g. `homebrew-formula-updater`), invoke the
 | Pre-flight: dirty working tree | Abort |
 | Pre-flight: git operation in progress | Abort |
 | Pre-flight: behind remote | Abort |
-| Pre-flight: ahead of remote | Warn, ask user |
+| Pre-flight: ahead of remote (no `--allow-ahead`) | Abort |
+| Pre-flight: ahead of remote (`--allow-ahead`) | Warn, note in report |
 | Version unresolvable | Ask user |
 | Changelog entry missing | Warn, ask user |
 | No changelog file | Note in warnings, continue |
 | Tag exists locally | Ask user: delete or abort |
 | Tag exists on remote | Report, ask user |
 | Push fails | Abort |
-| No CI run found within 60s | Report, ask user |
+| No CI run found within discovery timeout | Report, ask user |
 | CI failure | Diagnose, propose fix, confirm, retry up to limit |
 | Published release exists on retag | Report, suggest patch version |
 | Release not found after CI | Ask user |
