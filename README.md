@@ -87,7 +87,7 @@ The GitHub release process has a natural boundary: everything that happens in th
 
 Distribution is not release. Publishing to Homebrew, apt, or a Docker registry is a separate concern with separate failure modes, separate credentials, and separate rollback procedures. Folding distribution into the release engineer would couple two unrelated responsibility domains. Instead, distribution is pluggable: each downstream target gets its own skill, its own retry logic, and its own rollback path.
 
-This mirrors the scout-and-wave design principle: define the interface contract upfront, assign ownership cleanly, and compose at the boundary rather than merging concerns.
+This mirrors the [scout-and-wave](https://github.com/blackwell-systems/scout-and-wave) design principle: define the interface contract upfront, assign ownership cleanly, and compose at the boundary rather than merging concerns.
 
 ## License
 
