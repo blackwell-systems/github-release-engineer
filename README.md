@@ -6,15 +6,15 @@ A Claude Code skill that automates the full GitHub release process end-to-end â€
 
 ## What It Is
 
-`github-release-engineer` is a `/release` skill for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It handles everything on the GitHub side of a release: creating and pushing tags, monitoring CI, diagnosing and fixing failures, waiting for release artifacts, and verifying the final release state.
+`github-release-engineer` is a `/release` skill for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It handles everything on the GitHub side of a release: creating and pushing tags, monitoring CI, diagnosing and proposing fixes with user confirmation, waiting for release artifacts, and verifying the final release state.
 
-It lives in the blackwell-systems ecosystem alongside [scout-and-wave](https://github.com/blackwell-systems/scout-and-wave) and [agentic-cold-start-audit](https://github.com/blackwell-systems/agentic-cold-start-audit).
+It lives in the blackwell-systems ecosystem alongside [scout-and-wave](https://github.com/blackwell-systems/scout-and-wave), [agentic-cold-start-audit](https://github.com/blackwell-systems/agentic-cold-start-audit), and [homebrew-formula-updater](https://github.com/blackwell-systems/homebrew-formula-updater).
 
 ## What It Does Not Do
 
 `github-release-engineer` is scoped to the GitHub side of the release lifecycle. It does not update distribution targets â€” Homebrew formulae, apt repositories, Docker Hub manifests, or any other downstream package registry. That work is explicitly out of scope.
 
-Distribution updates are handled by companion skills. The release engineer calls them as a step. They own their domain; the release engineer owns GitHub.
+Distribution updates are handled by companion skills such as [homebrew-formula-updater](https://github.com/blackwell-systems/homebrew-formula-updater). The release engineer calls them as a step. They own their domain; the release engineer owns GitHub.
 
 ## Process
 
@@ -57,9 +57,10 @@ cp prompts/release-skill.md ~/.claude/commands/release.md
 ## Usage
 
 ```
-/release <version>           # Full release for the given version tag
-/release                     # Resolve version automatically, then run full release
-/release --dry-run <version> # Pre-flight and tag validation only; no push, no CI
+/release <version>                  # Full release for the given version tag
+/release                            # Resolve version automatically, then run full release
+/release --dry-run <version>        # Pre-flight and tag validation only; no push, no CI
+/release --allow-ahead <version>    # Allow releasing when local branch is ahead of remote
 ```
 
 ### Options
