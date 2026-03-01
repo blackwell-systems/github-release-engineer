@@ -1,4 +1,4 @@
-<!-- github-release-engineer v0.1.0 -->
+<!-- github-release-engineer v0.1.1 -->
 GitHub Release Engineer
 
 You are executing a GitHub release. Work through the steps below in order. Each step gates the next — do not proceed past a failure without either fixing it or getting explicit user confirmation to continue.
@@ -8,36 +8,66 @@ You are executing a GitHub release. Work through the steps below in order. Each 
 - `/release <version>` — release the specified version (e.g. `v1.2.0`)
 - `/release` — detect the version automatically, then confirm with the user before proceeding
 - `/release --dry-run <version>` — run pre-flight and tag validation only; do not push, do not trigger CI
-- `/release --pre-release <version>` — mark the GitHub release as pre-release
+- `/release --pre-release <version>` — mark the GitHub release as pre-release (sets `prerelease=true`, `draft=false`)
+- `/release --draft <version>` — create the release as a draft (sets `draft=true`)
+
+Timeouts are configurable via flags: `--ci-timeout <minutes>` (default 30), `--asset-timeout <minutes>` (default 10), `--poll-interval <seconds>` (default 30).
 
 ## Step 1 — Pre-flight
 
-Verify the repository is in a releasable state:
+Verify the repository is in a releasable state. Run all checks before reporting failures.
 
-- Working tree is clean (`git status` shows no uncommitted changes)
-- Current branch is the main branch (or the branch the user intends to release from)
-- Local branch is up to date with the remote (`git fetch` then compare)
-- No merge conflicts, no rebase in progress
+**Authentication and remote:**
+- Verify GitHub CLI is authenticated: `gh auth status`. Abort if not.
+- Determine the remote: `git remote get-url origin`. Abort if missing.
+- Verify the remote points to a reachable GitHub repo: `gh repo view`. Abort if not.
 
-If any check fails, report the specific failure and stop. Do not attempt to fix pre-flight failures automatically — they require the user to resolve them.
+**Working tree:**
+- No uncommitted changes: `git status --porcelain` must be empty
+- No merge, cherry-pick, or revert in progress: check for `.git/MERGE_HEAD`, `.git/CHERRY_PICK_HEAD`, `.git/REVERT_HEAD`
+- No rebase in progress: check for `.git/rebase-merge/` or `.git/rebase-apply/`
+
+**Branch:**
+- Determine the default branch: `git symbolic-ref refs/remotes/origin/HEAD`. If unset, ask the user which branch to release from.
+- Confirm the current branch is the release branch, or ask the user to confirm if it is not.
+- Local branch is up to date with the remote: `git fetch origin` then compare.
+
+If any check fails, report the specific failure and stop. Do not attempt to fix pre-flight failures automatically.
 
 ## Step 2 — Version
 
-If a version was provided as an argument, use it. Otherwise, detect it:
+**If a version was provided as an argument**, use it.
 
-- Look for a `VERSION` file in the repo root
-- Look for a version field in a language manifest: `Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`, `pom.xml`, `build.gradle`, or equivalent
-- If no version can be detected, ask the user
+**Otherwise, detect it in this order:**
+1. `VERSION` file in the repo root
+2. Language manifest: `Cargo.toml` (`version =`), `package.json` (`"version":`), `pyproject.toml` (`version =`), `pom.xml` (`<version>`), `build.gradle` (`version =`), or equivalent
+3. If no version can be detected, ask the user
 
-Validate that the version is a valid semver string (with or without a `v` prefix — normalize to `v` prefix for the tag). Confirm the resolved version with the user before tagging.
+**Normalization:**
+- Strip a leading `v` prefix if present, then re-add it: all tags are `vX.Y.Z`
+- Validate strict semver: `MAJOR.MINOR.PATCH` with optional pre-release identifiers (`-alpha.1`)
+- Do not allow build metadata (`+...`) in tags
+- If multiple manifests exist, use the first match in the precedence order above and note which file was used
+
+Confirm the resolved version with the user before proceeding.
 
 ## Step 3 — Changelog
 
-Look for a `CHANGELOG.md`, `CHANGELOG`, `HISTORY.md`, or equivalent in the repo root. If found, verify that an entry exists for the release version. If the entry is missing, warn the user and ask whether to continue. Do not abort automatically — a missing changelog entry is a warning, not a hard failure.
+Look for `CHANGELOG.md`, `CHANGELOG`, `HISTORY.md`, or equivalent in the repo root. If found, search for an entry matching the version. Accept common formats: `## v1.2.3`, `## 1.2.3`, `## [1.2.3]`, `## [v1.2.3]`. Normalize the version when searching (strip `v` prefix for comparison).
 
-## Step 4 — Tag
+If the entry is missing, warn the user and ask whether to continue. Do not abort automatically — a missing changelog entry is a warning, not a hard failure. If no changelog file exists, skip silently.
 
-Create the git tag:
+## Step 4 — Tag safety checks
+
+Before creating the tag:
+
+- **Tag must not exist locally**: `git tag -l <version>` must return empty. If it exists, ask the user: delete and recreate, or abort?
+- **Tag must not exist on remote**: `git ls-remote --tags origin <version>` must return empty. If it exists, do not delete it automatically — report it and ask the user how to proceed.
+- **Confirm the commit to tag**: default is `HEAD`. Show the commit hash and message, and ask the user to confirm.
+
+## Step 5 — Tag
+
+Create the tag:
 
 ```
 git tag -a <version> -m "Release <version>"
@@ -47,7 +77,7 @@ Verify the tag was created: `git tag -l <version>`. If tag creation fails, repor
 
 If `--dry-run` was passed, stop here and report what would have been pushed.
 
-## Step 5 — Push tag
+## Step 6 — Push tag
 
 Push the tag to the remote:
 
@@ -55,87 +85,120 @@ Push the tag to the remote:
 git push origin <version>
 ```
 
-Confirm the push succeeded. If it fails, report the full error. Common causes: tag already exists on remote, missing push access. Do not force-push without explicit user instruction.
+Confirm the push succeeded. If it fails, report the full error and stop. Do not force-push without explicit user instruction.
 
-## Step 6 — Watch CI
+## Step 7 — Watch CI
 
-Find the GitHub Actions workflow run triggered by the tag push. Use `gh run list` to locate it — filter by the tag ref if needed. Then watch it:
+Find the GitHub Actions workflow run triggered by the tag push:
+
+```
+gh run list --event push --branch refs/tags/<version>
+```
+
+If multiple runs are found, select the most recent one on `refs/tags/<version>`. If no run is found within 60 seconds of the push, report the absence and ask the user whether to wait longer or skip CI monitoring. If CI is known to trigger on release creation rather than tag push, note this and proceed to Step 8.
+
+Watch the selected run:
 
 ```
 gh run watch <run-id> --exit-status
 ```
 
-Stream status updates. If the run takes longer than 30 minutes (or a user-configured timeout), report the current status and ask the user how to proceed.
+Stream status updates. Time out after `--ci-timeout` minutes and report the current status, then ask the user how to proceed.
 
-## Step 7 — Diagnose and fix failures
+## Step 8 — Diagnose and fix failures
 
 If CI fails:
 
 1. Fetch the failed job logs: `gh run view <run-id> --log-failed`
 2. Identify the root cause from the logs
-3. Report the failure clearly: which job failed, what the error is, what the likely fix is
+3. Report clearly: which job failed, what the error is, what the likely fix is
 4. Propose the fix and wait for user confirmation before applying it
-5. Apply the fix, commit, then delete and re-push the tag:
-   ```
-   git tag -d <version>
-   git push origin :<version>
-   git tag -a <version> -m "Release <version>"
-   git push origin <version>
-   ```
-6. Return to Step 6. Repeat up to 2 times (or a user-configured retry limit). After the retry limit, stop and report.
+5. Apply the fix and commit
+
+**On retagging:** Before deleting and re-pushing the tag, verify the tag is not already associated with a published (non-draft) GitHub release: `gh release view <version> --json isDraft`. If a published release exists, do not retag — report this and ask the user whether to release a patch version instead. If no release exists or it is a draft, proceed:
+
+```
+git tag -d <version>
+git push origin :<version>
+git tag -a <version> -m "Release <version>"
+git push origin <version>
+```
+
+Return to Step 7. Repeat up to `--retries` times (default 2). After the retry limit, stop and report.
 
 Do not attempt to fix failures you cannot confidently diagnose. If the root cause is unclear, report the raw logs and ask the user.
 
-## Step 8 — Wait for release artifacts
+## Step 9 — Wait for release artifacts
 
-After CI passes, poll for release assets:
+After CI passes, determine whether a GitHub release was created automatically (by goreleaser, cargo-dist, a CI step, or another mechanism):
+
+```
+gh release view <version> --json isDraft,assets
+```
+
+If no release exists, ask the user: should one be created now (`gh release create`), or is this expected (e.g., manual upload)?
+
+Once the release exists, poll for assets every `--poll-interval` seconds:
 
 ```
 gh release view <version> --json assets
 ```
 
-Wait until assets are attached to the release and non-zero in size. Check every 30 seconds. Timeout after 10 minutes. The release process is build-tool agnostic — artifacts may be produced by goreleaser, cargo-dist, PyInstaller, a Makefile target, or any other mechanism. Wait for assets to appear; do not assume how they were built.
+Wait until:
+- At least one asset is attached
+- All assets are non-zero in size
+- Asset count is stable across two consecutive polls (avoids mid-upload state)
 
-If no assets appear within the timeout, report the current release state and ask the user whether to continue.
+Time out after `--asset-timeout` minutes and report the current release state, then ask the user whether to continue.
 
-## Step 9 — Verify release
+## Step 10 — Verify release
 
-Confirm the release is in a publishable state:
+Confirm the release is in the expected state:
 
 - Release exists: `gh release view <version>`
-- Not in draft state (unless `--pre-release` was passed with the intention of a draft)
+- `isDraft` is false (unless `--draft` was passed)
+- `isPrerelease` matches the `--pre-release` flag
 - Tag on the release matches the version
 - Assets are present and non-zero in size
 - Release notes are populated
 
 Report any verification failures. If the release is in draft state unexpectedly, ask the user whether to publish it.
 
-## Step 10 — Report
+## Step 11 — Report
 
 Emit a structured summary:
 
 ```
 Release: <version>
-Tag:     <git tag>
+Tag:     <git tag> (<commit hash>)
 CI run:  <url>
 Release: <github release url>
 
 Assets:
-  <filename>  <size>
+  <filename>  <size>  <url>
   ...
 
 Warnings: <any non-fatal issues encountered, or "none">
 ```
 
-If companion skills are configured (e.g. homebrew-formula-updater), invoke them now, passing the release URL and asset list. Each companion skill owns its own domain — do not attempt to update distribution targets directly.
+If companion skills are configured (e.g. `homebrew-formula-updater`), invoke them now. Pass: release URL, tag, and the full asset list with filenames, URLs, and sizes. Companion skill failures are reported as warnings in the summary — they do not retroactively fail the release.
 
-## Error handling
+## Error handling policy
 
-- Pre-flight failures: stop, report, do not proceed
-- Tag failures: stop, report
-- CI failures: diagnose, propose fix, wait for confirmation, retry up to limit
-- Artifact wait timeout: report state, ask user
-- Verification failures: report, ask user whether to publish anyway
-- Unknown errors: report the raw output, stop, ask the user
+| Failure | Policy |
+|---|---|
+| Pre-flight failure | Stop, report, do not proceed |
+| Version unresolvable | Ask user |
+| Changelog entry missing | Warn, ask user |
+| Tag exists locally | Ask user: delete or abort |
+| Tag exists on remote | Report, ask user |
+| Push fails | Stop, report |
+| No CI run found | Report, ask user |
+| CI failure | Diagnose, propose fix, confirm, retry up to limit |
+| Published release exists on retag | Report, suggest patch version |
+| No release after CI | Ask user |
+| Asset wait timeout | Report state, ask user |
+| Verification failure | Report, ask user |
+| Unknown error | Report raw output, stop, ask user |
 
 When in doubt, stop and report rather than proceeding. A failed release that surfaces early is better than a partial release that requires manual cleanup.
