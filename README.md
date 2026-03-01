@@ -1,6 +1,7 @@
 # github-release-engineer
 
 [![Blackwell Systems™](https://raw.githubusercontent.com/blackwell-systems/blackwell-docs-theme/main/badge-trademark.svg)](https://github.com/blackwell-systems)
+[![Version](https://img.shields.io/github/v/release/blackwell-systems/github-release-engineer)](https://github.com/blackwell-systems/github-release-engineer/releases/latest)
 
 A Claude Code skill that automates the full GitHub release process end-to-end — from tagging through CI, artifact production, and release verification.
 
