@@ -6,7 +6,7 @@ A Claude Code skill that automates the full GitHub release process end-to-end �
 
 ## What It Is
 
-`github-release-engineer` is a `/release` skill for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It handles everything on the GitHub side of a release: creating and pushing tags, monitoring CI, diagnosing and fixing failures, waiting for goreleaser artifacts, and verifying the final release state.
+`github-release-engineer` is a `/release` skill for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It handles everything on the GitHub side of a release: creating and pushing tags, monitoring CI, diagnosing and fixing failures, waiting for release artifacts, and verifying the final release state.
 
 It lives in the blackwell-systems ecosystem alongside [scout-and-wave](https://github.com/blackwell-systems/scout-and-wave) and [agentic-cold-start-audit](https://github.com/blackwell-systems/agentic-cold-start-audit).
 
@@ -20,16 +20,17 @@ Distribution updates are handled by companion skills. The release engineer calls
 
 The skill follows a fixed sequence. Each step gates the next:
 
-1. **Pre-flight** — Verify the working tree is clean, the branch is up to date with the remote, and there are no uncommitted changes. Abort with a clear error if any check fails.
-2. **Version resolution** — Determine the release version: read from argument, `VERSION` file, or a language-specific manifest (`Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`, `pom.xml`, etc.). Fall back to prompting the user. Validate it is a valid semver string.
-3. **Changelog verification** — Confirm an entry exists for the version in `CHANGELOG.md` (or equivalent). Warn but do not abort if no changelog is found; the user decides.
-4. **Tag** — Create a signed, annotated git tag (`git tag -s vX.Y.Z -m "Release vX.Y.Z"`). Verify the tag before pushing.
-5. **Push tag** — Push the tag to the remote. Confirm the push succeeded.
-6. **Watch CI** — Poll the GitHub Actions workflow run triggered by the tag. Stream status until the run reaches a terminal state (success, failure, cancelled). Timeout after a configurable maximum (default 30 minutes).
-7. **Diagnose and fix failures** — If the run fails, fetch the failed job logs, identify the root cause, propose a fix, apply it (with user confirmation), amend or add a commit, delete and re-push the tag, and re-enter the CI watch loop. Repeat up to a configurable retry limit.
-8. **Wait for release artifacts** — After CI passes, poll the GitHub release for attached assets. Wait until assets are present and non-zero in size, or the wait times out. The skill does not assume any specific build tool — artifacts may be produced by goreleaser, cargo-dist, PyInstaller, a custom Makefile, or any other mechanism. It waits for assets to appear on the release, regardless of how they were built.
-9. **Verify the release** — Confirm the release is published (not draft, not pre-release unless explicitly flagged), the tag matches, assets are present and non-zero in size, and the release notes are populated.
-10. **Report** — Emit a structured summary: version, tag, CI run URL, artifact list with sizes, release URL, and any warnings encountered during the run.
+1. **Pre-flight** — Verify GitHub CLI authentication, remote reachability, a clean working tree, no in-progress git operations, and that the local branch is not behind (or ahead without `--allow-ahead`) of the remote. Abort with a clear error if any check fails.
+2. **Version** — Determine the release version: read from argument, `VERSION` file, or a language-specific manifest (`Cargo.toml`, `package.json`, `pyproject.toml`, `pom.xml`, `build.gradle`). Fall back to prompting the user. Validate strict semver and confirm with the user before proceeding.
+3. **Changelog** — Look for a changelog file and search for an entry matching the version. Warn but do not abort if no changelog or entry is found; the user decides whether to continue.
+4. **Tag safety checks** — Before creating the tag, confirm the tag does not already exist locally or on the remote, and confirm the exact commit SHA to tag with the user.
+5. **Tag** — Create an annotated git tag (`git tag -a vX.Y.Z -m "Release vX.Y.Z"`). Verify the tag was created. Stop here if `--dry-run` was passed.
+6. **Push tag** — Push the tag to the remote. Confirm the push succeeded. Do not force-push without explicit user instruction.
+7. **Watch CI** — Locate the GitHub Actions run triggered by the tag push, matching on commit SHA. Poll until the run reaches a terminal state (success, failure, cancelled). Timeout after `--ci-timeout` minutes (default 30).
+8. **Diagnose and fix failures** — If CI fails, fetch failed job logs, identify the root cause, propose a fix, apply it with user confirmation, commit, delete and re-push the tag, and re-enter the CI watch loop. Check for a published release before retagging. Repeat up to `--retries` times.
+9. **Wait for release artifacts** — After CI passes, poll the GitHub release for attached assets every `--poll-interval` seconds. Wait until at least one asset is present, all assets are non-zero in size, and the asset count is stable across two consecutive polls. Timeout after `--asset-timeout` minutes (default 10). The skill is build-tool agnostic — it waits for assets regardless of how they were produced.
+10. **Verify release** — Confirm the release is in the expected state (`isDraft`, `isPrerelease`) based on flags passed, the tag matches, assets are present and non-zero in size, and release notes are populated.
+11. **Report** — Emit a structured summary: version, tag, CI run URL, release URL, artifact list with sizes, and any warnings encountered during the run. Invoke companion skills if configured.
 
 ## Composition with Companion Skills
 
@@ -37,7 +38,7 @@ The release engineer handles the GitHub side only. When the GitHub release is ve
 
 ```
 /release v1.4.0
-# → github-release-engineer runs steps 1–10
+# → github-release-engineer runs steps 1–11
 # → on success, calls /homebrew-formula-updater
 # → homebrew-formula-updater reads the artifact URLs and checksums
 #   from the step report and updates the tap formula
@@ -63,13 +64,17 @@ cp prompts/release-skill.md ~/.claude/commands/release.md
 
 ### Options
 
-| Flag | Description |
-|---|---|
-| `--dry-run` | Validate version, changelog, and tag; stop before pushing |
-| `--no-sign` | Skip GPG signing (not recommended; requires explicit acknowledgment) |
-| `--pre-release` | Mark the GitHub release as pre-release |
-| `--timeout <minutes>` | CI watch timeout in minutes (default: 30) |
-| `--retries <n>` | Max CI fix-and-retry cycles (default: 2) |
+| Flag | Default | Description |
+|---|---|---|
+| `--dry-run` | — | Validate version, changelog, and tag; stop before pushing |
+| `--pre-release` | — | Mark the GitHub release as pre-release (`prerelease=true`, `draft=false`) |
+| `--draft` | — | Create the release as a draft (`draft=true`, `prerelease=false`) |
+| `--allow-ahead` | — | Allow releasing when local branch is ahead of remote |
+| `--ci-timeout <minutes>` | `30` | CI watch timeout in minutes |
+| `--ci-discovery-timeout <seconds>` | `60` | Seconds to wait for a CI run to appear after tag push |
+| `--asset-timeout <minutes>` | `10` | Minutes to wait for release assets to be attached |
+| `--poll-interval <seconds>` | `30` | Seconds between CI and asset status polls |
+| `--retries <n>` | `2` | Max CI diagnose-and-retry cycles |
 
 ## Files
 
