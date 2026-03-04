@@ -74,6 +74,16 @@ Only these files are checked. If none match and no version was provided, ask the
 - Do not allow build metadata (`+...`) in tags
 - If multiple manifests exist, use the first match in the precedence order above; note which file was used
 
+**Validation against existing tags:**
+- Get the most recent tag: `git tag -l 'v*' | sort -V | tail -1`
+- If a previous tag exists, compare it to the proposed version:
+  - For releases going from `vX.Y.Z` to `vA.B.C`, check that the version progression is valid
+  - Warn if skipping versions (e.g., 0.8.1 → 0.9.2 skips 0.9.0 and 0.9.1)
+  - Expected progressions: major bump (X+1.0.0), minor bump (X.Y+1.0), patch bump (X.Y.Z+1)
+  - Show: "Previous: vX.Y.Z → Proposed: vA.B.C"
+  - If the jump is unusual, note it and ask the user to confirm the version is correct
+- If no previous tags exist, note "First release" and proceed
+
 Confirm the resolved version with the user before proceeding.
 
 ## Step 3 — Changelog
