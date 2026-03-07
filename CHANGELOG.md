@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v0.1.4] - 2026-03-06
+
+### Added
+
+- YAML frontmatter: `name`, `description`, `disable-model-invocation: true`, and `argument-hint` — migrates to the Claude Code skills spec and prevents Claude from auto-invoking the release workflow
+- `$ARGUMENTS` placeholder in the Arguments section so Claude receives the exact invocation string rather than relying on auto-appended arguments
+
+### Changed
+
+- README framing updated to lead with the [Agent Skills](https://agentskills.io) open standard — skill is no longer described as Claude Code-specific
+- Install method changed from `cp` to `ln -s` — symlink keeps the global skill in sync with the repo automatically
+- Install target updated from `.claude/commands/release.md` to `.claude/skills/release/SKILL.md` — adopts the current skills directory format
+
+### Removed
+
+- Duplicate `release.md` at the repo root (canonical source is `prompts/release-skill.md`)
+
 ## [v0.1.3] - 2026-03-01
 
 ### Added

@@ -3,11 +3,13 @@
 [![Blackwell Systems™](https://raw.githubusercontent.com/blackwell-systems/blackwell-docs-theme/main/badge-trademark.svg)](https://github.com/blackwell-systems)
 [![Version](https://img.shields.io/github/v/release/blackwell-systems/github-release-engineer)](https://github.com/blackwell-systems/github-release-engineer/releases/latest)
 
-A Claude Code skill that automates the full GitHub release process end-to-end — from tagging through CI, artifact production, and release verification.
+An [Agent Skills](https://agentskills.io) skill that automates the full GitHub release process end-to-end — from tagging through CI, artifact production, and release verification.
 
 ## What It Is
 
-`github-release-engineer` is a `/release` skill for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It handles everything on the GitHub side of a release: creating and pushing tags, monitoring CI, diagnosing and proposing fixes with user confirmation, waiting for release artifacts, and verifying the final release state.
+`github-release-engineer` is a `/release` skill built on the [Agent Skills](https://agentskills.io) open standard. It handles everything on the GitHub side of a release: creating and pushing tags, monitoring CI, diagnosing and proposing fixes with user confirmation, waiting for release artifacts, and verifying the final release state.
+
+It works in any Agent Skills-compatible tool. Install instructions below use Claude Code's skills directory as the reference implementation.
 
 It lives in the blackwell-systems ecosystem alongside [scout-and-wave](https://github.com/blackwell-systems/scout-and-wave), [agentic-cold-start-audit](https://github.com/blackwell-systems/agentic-cold-start-audit), and [homebrew-formula-updater](https://github.com/blackwell-systems/homebrew-formula-updater).
 
@@ -49,10 +51,11 @@ Each skill owns exactly one domain. The release engineer does not know how to wr
 
 ## Install
 
-Copy the skill to your global Claude Code commands directory:
+Symlink the skill into your skills directory so updates to the repo are picked up automatically:
 
 ```bash
-cp prompts/release-skill.md ~/.claude/commands/release.md
+mkdir -p ~/.claude/skills/release
+ln -s "$(pwd)/prompts/release-skill.md" ~/.claude/skills/release/SKILL.md
 ```
 
 ## Usage
@@ -80,7 +83,7 @@ cp prompts/release-skill.md ~/.claude/commands/release.md
 
 ## Files
 
-- [`prompts/release-skill.md`](prompts/release-skill.md): The `/release` Claude Code skill (copy to `~/.claude/commands/release.md`)
+- [`prompts/release-skill.md`](prompts/release-skill.md): The `/release` skill — symlink to `~/.claude/skills/release/SKILL.md` or the equivalent path for your Agent Skills-compatible tool
 
 ## Design Philosophy
 

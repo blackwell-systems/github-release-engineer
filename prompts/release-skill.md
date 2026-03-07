@@ -1,3 +1,10 @@
+---
+name: release
+description: Automates the full GitHub release process end-to-end: creates and pushes annotated tags, monitors CI, waits for release artifacts, and verifies the final release state. Use when ready to cut a release. Supports --dry-run, --pre-release, --draft, --allow-ahead, and configurable timeouts.
+disable-model-invocation: true
+argument-hint: "[version] [--dry-run] [--pre-release] [--draft] [--allow-ahead]"
+---
+
 <!-- github-release-engineer v0.1.4 -->
 GitHub Release Engineer
 
@@ -6,6 +13,8 @@ You are executing a GitHub release. Work through the steps below in order. Each 
 **Background execution:** All long-running blocking commands (`gh run watch`, polling loops, asset wait loops) must use `run_in_background: true` and be awaited via `TaskOutput`. Never run watch or poll commands as foreground blocking calls — the user should not have to manually background anything.
 
 ## Arguments
+
+Invoked with: `$ARGUMENTS`
 
 - `/release <version>` — release the specified version (e.g. `v1.2.0`)
 - `/release` — detect the version automatically, then confirm with the user before proceeding
